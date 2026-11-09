@@ -1,0 +1,64 @@
+{
+  "name": "n8n-nodes-hectile",
+  "version": "1.0.0",
+  "description": "Hectile nodes for n8n: customers, invoices, estimates, payments and reports, and Hectile's events as a trigger.",
+  "license": "MIT",
+  "homepage": "https://hectile.com/features/automation-apps",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "hectile",
+    "invoicing",
+    "invoices",
+    "estimates",
+    "payments"
+  ],
+  "author": {
+    "name": "Zealsync Private Limited",
+    "email": "support@hectile.com",
+    "url": "https://hectile.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zealsync/n8n-nodes-hectile.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zealsync/n8n-nodes-hectile/issues"
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "build:watch": "tsc --watch",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "test": "node --test test/*.test.js",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": [
+      "dist/credentials/HectileApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Hectile/Hectile.node.js",
+      "dist/nodes/HectileTrigger/HectileTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "0.55.5",
+    "eslint": "9.39.5",
+    "prettier": "3.8.3",
+    "release-it": "21.1.0",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "node": "n8n-nodes-hectile.hectile",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": ["Finance & Accounting", "Sales"],
+  "resources": {
+    "credentialDocumentation": [{ "url": "https://hectile.com/help/api-keys" }],
+    "primaryDocumentation": [{ "url": "https://hectile.com/help/automation-apps" }]
+  }
+}

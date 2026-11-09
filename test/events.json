@@ -1,0 +1,14 @@
+[
+  "invoice.issued",
+  "invoice.sent",
+  "invoice.paid",
+  "invoice.overdue",
+  "estimate.accepted",
+  "estimate.declined",
+  "payment.received",
+  "payment.refunded",
+  "credit_note.issued",
+  "debit_note.issued",
+  "customer.created",
+  "customer.updated"
+]
