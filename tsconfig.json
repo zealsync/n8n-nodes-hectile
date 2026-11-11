@@ -19,12 +19,10 @@
     "preserveConstEnums": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "incremental": true,
     "declaration": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "outDir": "./dist/",
-    "tsBuildInfoFile": "./node_modules/.cache/n8n-nodes-hectile.tsbuildinfo"
+    "outDir": "./dist/"
   },
   "include": [
     "credentials/**/*",

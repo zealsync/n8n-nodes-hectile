@@ -89,6 +89,25 @@ jobs:
       - name: Run tests
         run: 'npm run build && npm test'
 
+      - name: Check the package
+        # The release step below builds again before it publishes, and a published version can never be
+        # replaced. So build once more here, and stop unless the package still holds every node and
+        # credential that package.json declares.
+        run: |
+          npm run build
+          npm pack --dry-run --json > "$RUNNER_TEMP/pack.json"
+          node -e '
+            const [pack] = require(process.argv[1]);
+            const { nodes, credentials } = require("./package.json").n8n;
+            const packed = new Set(pack.files.map((file) => file.path));
+            const missing = [...nodes, ...credentials].filter((file) => !packed.has(file));
+            console.log(`${pack.name}@${pack.version}: ${pack.entryCount} files, ${pack.integrity}`);
+            if (missing.length > 0) {
+              console.error(`Missing from the package: ${missing.join(", ")}`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/pack.json"
+
       - name: Release
         # Publishes to npm with a provenance attestation (requires id-token: write above).
         # Lint and build run automatically as part of the release process.
@@ -102,3 +121,5 @@ jobs:
           npm run release
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm makes the provenance statement for a package's first version only when access is public.
+          NPM_CONFIG_ACCESS: public
