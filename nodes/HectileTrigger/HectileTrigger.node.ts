@@ -1,5 +1,15 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { NodeConnectionTypes, type IDataObject, type IHookFunctions, type INodeType, type INodeTypeDescription, type IWebhookFunctions, type IWebhookResponseData } from "n8n-workflow";
+import {
+  NodeApiError,
+  NodeConnectionTypes,
+  type IDataObject,
+  type IHookFunctions,
+  type INodeType,
+  type INodeTypeDescription,
+  type IWebhookFunctions,
+  type IWebhookResponseData,
+  type JsonObject,
+} from "n8n-workflow";
 
 // Hectile's webhook events (test/events.json lists them; a test keeps the two equal).
 const EVENTS = [
@@ -16,6 +26,27 @@ const EVENTS = [
   { name: "Payment Received", value: "payment.received" },
   { name: "Payment Refunded", value: "payment.refunded" },
 ];
+
+/**
+ * The HTTP status of a failed request, read from the error's own structure: n8n's request helpers throw a NodeApiError
+ * whose cause is the HTTP client's error (`cause.response.status`) and whose `httpCode` holds the status as text; a
+ * plain HTTP client error has `response.status`. Never read from the message. Undefined when no response arrived
+ * (a network failure or a timeout).
+ */
+function failedStatus(error: unknown): number | undefined {
+  const failure = error as { httpCode?: unknown; response?: { status?: unknown }; cause?: { response?: { status?: unknown } } } | undefined;
+  for (const value of [failure?.cause?.response?.status, failure?.response?.status, failure?.httpCode]) {
+    const status = typeof value === "number" ? value : typeof value === "string" && /^[1-5]\d\d$/.test(value) ? Number(value) : NaN;
+    if (Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  }
+  return undefined;
+}
+
+/** The body Hectile answered a failed request with, if any (the same structure as above; NodeApiError keeps a copy in context.data). */
+function failedBody(error: unknown): unknown {
+  const failure = error as { response?: { data?: unknown }; cause?: { response?: { data?: unknown } }; context?: { data?: unknown } } | undefined;
+  return failure?.cause?.response?.data ?? failure?.response?.data ?? failure?.context?.data;
+}
 
 /** Hectile's webhooks: subscribes its own URL with the key, checks each signature, unsubscribes when turned off. */
 export class HectileTrigger implements INodeType {
@@ -71,11 +102,28 @@ export class HectileTrigger implements INodeType {
       },
       async delete(this: IHookFunctions): Promise<boolean> {
         const data = this.getWorkflowStaticData("node");
-        if (data.webhookId) {
-          const credentials = await this.getCredentials("hectileApi");
-          await this.helpers.httpRequestWithAuthentication
-            .call(this, "hectileApi", { method: "DELETE", url: `${credentials.baseUrl}/webhooks/${data.webhookId}`, json: true })
-            .catch(() => undefined);
+        if (!data.webhookId) {
+          // Nothing was subscribed (or it was already removed): there is nothing to delete in Hectile.
+          delete data.secret;
+          return true;
+        }
+        const credentials = await this.getCredentials("hectileApi");
+        try {
+          await this.helpers.httpRequestWithAuthentication.call(this, "hectileApi", {
+            method: "DELETE",
+            url: `${credentials.baseUrl}/webhooks/${data.webhookId}`,
+            json: true,
+          });
+        } catch (error) {
+          // Deliberate: Hectile answers 404 with the error code NOT_FOUND when this subscription no longer exists (it
+          // was removed in Hectile's settings, or with another key's workflow). The goal of deleting is then already
+          // met, so the stored details can go. Any other failure — a refused or revoked key (401, 403), a rate limit
+          // (429), a server error, a network failure or a timeout, or a 404 that isn't Hectile's NOT_FOUND — may leave
+          // the subscription in place: keep its ID and secret so turning the workflow off can be retried, and report
+          // the error.
+          const body = failedBody(error) as { error?: { code?: unknown } } | undefined;
+          const absent = failedStatus(error) === 404 && body?.error?.code === "NOT_FOUND";
+          if (!absent) throw new NodeApiError(this.getNode(), error as JsonObject);
         }
         delete data.webhookId;
         delete data.secret;
