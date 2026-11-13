@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-hectile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Hectile nodes for n8n: customers, invoices, estimates, payments and reports, and Hectile's events as a trigger.",
   "license": "MIT",
   "homepage": "https://hectile.com/features/automation-apps",

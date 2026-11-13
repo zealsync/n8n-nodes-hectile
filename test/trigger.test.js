@@ -6,6 +6,9 @@ const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { HectileTrigger } = require("../dist/nodes/HectileTrigger/HectileTrigger.node.js");
 const { Hectile } = require("../dist/nodes/Hectile/Hectile.node.js");
+// The errors n8n itself raises: its request helpers wrap the HTTP client's AxiosError in a NodeApiError.
+const { NodeApiError, NodeHelpers } = require("n8n-workflow");
+const { AxiosError } = require("axios");
 
 const node = new HectileTrigger();
 const SECRET = "whsec_test0000000000000000000000000000";
@@ -20,6 +23,7 @@ function hooks({ answers = [], staticData = {}, events = ["invoice.paid"] } = {}
     getCredentials: async () => ({ baseUrl: BASE, apiKey: "hk_test_x" }),
     getNodeWebhookUrl: () => "https://n8n.example/webhook/abc",
     getNodeParameter: () => events,
+    getNode: () => ({ id: "node-1", name: "Hectile Trigger", type: "n8n-nodes-hectile.hectileTrigger", typeVersion: 1, position: [0, 0], parameters: {} }),
     helpers: {
       httpRequestWithAuthentication: {
         call: async (_self, credential, options) => {
@@ -67,12 +71,77 @@ test("subscribes its own URL with the key, keeps the id and secret, and removes 
   const moved = hooks({ staticData: self.staticData, answers: [{ data: [{ id: "hook-1", url: "https://n8n.example/webhook/other" }] }] });
   assert.equal(await node.webhookMethods.default.checkExists.call(moved), false);
 
-  // Already gone in Hectile (removed there, or the key revoked): turning off still succeeds.
-  const off = hooks({ staticData: { ...self.staticData }, answers: [new Error("404")] });
+  // Turned off: Hectile removes the subscription, and the stored ID and secret go.
+  const off = hooks({ staticData: { ...self.staticData }, answers: [{ id: "hook-1", object: "webhook_endpoint", deleted: true }] });
   assert.equal(await node.webhookMethods.default.delete.call(off), true);
-  assert.equal(off.calls[0].method, "DELETE");
-  assert.equal(off.calls[0].url, `${BASE}/webhooks/hook-1`);
+  assert.deepEqual(off.calls, [{ credential: "hectileApi", method: "DELETE", url: `${BASE}/webhooks/hook-1`, json: true }]);
   assert.deepEqual(off.staticData, {});
+});
+
+// What n8n throws when Hectile answers with an error (status and body), or when no answer arrives (code only).
+function n8nFailure({ status, body, code, message = "Request failed" }) {
+  const config = { method: "delete", url: `${BASE}/webhooks/hook-1`, headers: {} };
+  const response = status ? { status, statusText: "", data: body, headers: {}, config } : undefined;
+  const axios = new AxiosError(message, code ?? (status ? (status >= 500 ? "ERR_BAD_RESPONSE" : "ERR_BAD_REQUEST") : undefined), config, {}, response);
+  return new NodeApiError({ id: "node-1", name: "Hectile Trigger", type: "n8n-nodes-hectile.hectileTrigger", typeVersion: 1, position: [0, 0], parameters: {} }, axios);
+}
+const stored = () => ({ webhookId: "hook-1", secret: SECRET });
+const problem = (code, message) => ({ error: { code, message } });
+
+test("turning off with nothing stored makes no request and succeeds", async () => {
+  const self = hooks({ staticData: {} });
+  assert.equal(await node.webhookMethods.default.delete.call(self), true);
+  assert.deepEqual(self.calls, []);
+  assert.deepEqual(self.staticData, {});
+});
+
+test("a confirmed 404 (Hectile's NOT_FOUND: the subscription is already gone) counts as deleted", async () => {
+  const failure = n8nFailure({ status: 404, body: problem("NOT_FOUND", "No webhook endpoint with this ID here.") });
+  assert.equal(failure.httpCode, "404"); // n8n's own reading of the status
+  const self = hooks({ staticData: stored(), answers: [failure] });
+  assert.equal(await node.webhookMethods.default.delete.call(self), true);
+  assert.equal(self.calls.length, 1);
+  assert.deepEqual(self.staticData, {});
+});
+
+test("any other failure keeps the stored ID and secret and reports the error", async (t) => {
+  const cases = [
+    ["401, key refused or revoked", n8nFailure({ status: 401, body: problem("UNAUTHORIZED", "This API key isn't valid.") }), 401],
+    ["403, key without the scope", n8nFailure({ status: 403, body: problem("FORBIDDEN", "This key can't do that.") }), 403],
+    ["429, rate limited", n8nFailure({ status: 429, body: problem("RATE_LIMITED", "Too many requests.") }), 429],
+    ["500, server error", n8nFailure({ status: 500, body: problem("INTERNAL", "Something went wrong.") }), 500],
+    ["502, bad gateway", n8nFailure({ status: 502, body: "<html>Bad Gateway</html>" }), 502],
+    ["503, unavailable", n8nFailure({ status: 503, body: problem("UNAVAILABLE", "Try again shortly.") }), 503],
+    ["404 that isn't Hectile's NOT_FOUND (a wrong base URL or a proxy)", n8nFailure({ status: 404, body: "<html>Not Found</html>" }), 404],
+    ["network failure", n8nFailure({ code: "ECONNREFUSED", message: "connect ECONNREFUSED 203.0.113.10:443" }), undefined],
+    ["DNS failure", n8nFailure({ code: "ENOTFOUND", message: "getaddrinfo ENOTFOUND hectile.example" }), undefined],
+    ["timeout", n8nFailure({ code: "ECONNABORTED", message: "timeout of 30000ms exceeded" }), undefined],
+    ["socket timeout", n8nFailure({ code: "ETIMEDOUT", message: "connect ETIMEDOUT" }), undefined],
+    // The old test treated this as proof the subscription was gone; a message is not a status.
+    ["a plain Error whose message says 404", new Error("404"), undefined],
+  ];
+  for (const [label, failure, status] of cases) {
+    await t.test(label, async () => {
+      const self = hooks({ staticData: stored(), answers: [failure] });
+      await assert.rejects(node.webhookMethods.default.delete.call(self), (error) => {
+        assert.ok(error instanceof NodeApiError, "reported as a NodeApiError");
+        if (status !== undefined) assert.equal(Number(error.httpCode), status);
+        return true;
+      });
+      assert.equal(self.calls.length, 1);
+      assert.deepEqual(self.staticData, stored(), "the ID and secret stay, so turning off can be retried");
+    });
+  }
+});
+
+test("after a failed turn-off, trying again deletes the subscription", async () => {
+  const staticData = stored();
+  await assert.rejects(node.webhookMethods.default.delete.call(hooks({ staticData, answers: [n8nFailure({ status: 503, body: problem("UNAVAILABLE", "Try again shortly.") })] })));
+  assert.deepEqual(staticData, stored());
+  const retry = hooks({ staticData, answers: [{ id: "hook-1", object: "webhook_endpoint", deleted: true }] });
+  assert.equal(await node.webhookMethods.default.delete.call(retry), true);
+  assert.equal(retry.calls[0].url, `${BASE}/webhooks/hook-1`);
+  assert.deepEqual(staticData, {});
 });
 
 test("starts the workflow only for a fresh message Hectile signed with this subscription's secret", async () => {
@@ -157,4 +226,25 @@ test("every create can send an Idempotency-Key header, and nothing else does", (
   assert.match(payment.description, /no time limit/);
   const customer = withKey.find((collection) => collection.displayOptions.show.resource[0] === "customer").options.find((entry) => entry.name === "idempotencyKey");
   assert.match(customer.description, /24 hours/);
+});
+
+test("Payment → Record → Method is required, and saved workflows keep their method", () => {
+  const description = new Hectile().description;
+  const method = description.properties.find((property) => property.name === "method" && property.displayOptions.show.resource[0] === "payment");
+  // Same parameter as 1.0.0: name, options, default and routing unchanged; only `required` is new.
+  assert.equal(method.required, true);
+  assert.equal(method.type, "options");
+  assert.equal(method.default, "bank_transfer");
+  assert.deepEqual(method.displayOptions.show, { resource: ["payment"], operation: ["create"] });
+  assert.deepEqual(method.options.map((option) => option.value), ["bank_transfer", "card", "cash", "cheque", "digital_wallet", "online_payment", "other", "upi"]);
+  assert.deepEqual(method.routing, { send: { type: "body", property: "method" } });
+  // n8n's own resolution of a saved node's parameters (what the editor and the executor read).
+  const resolve = (saved) => NodeHelpers.getNodeParameters(description.properties, saved, true, false, null, null);
+  const base = { resource: "payment", operation: "create", invoice_id: "inv-1", amount: "100" };
+  assert.equal(resolve({ ...base, method: "upi" }).method, "upi");
+  assert.equal(resolve({ ...base, method: "={{ $json.paymentMethod }}" }).method, "={{ $json.paymentMethod }}");
+  // n8n leaves a value equal to the default out of the saved workflow: it still resolves to the same method as before.
+  assert.equal(resolve(base).method, "bank_transfer");
+  // Other resources never see it.
+  assert.equal(resolve({ resource: "invoice", operation: "create" }).method, undefined);
 });

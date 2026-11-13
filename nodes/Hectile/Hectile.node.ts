@@ -258,6 +258,7 @@ const payment: INodeProperties[] = [
     displayName: "Method",
     name: "method",
     type: "options",
+    required: true,
     default: "bank_transfer",
     displayOptions: only(["payment"], ["create"]),
     options: [
