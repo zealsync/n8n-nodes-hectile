@@ -2,6 +2,8 @@
 
 This is an n8n community node. It lets you use [Hectile](https://hectile.com), invoicing and estimates software, in your n8n workflows: customers, invoices, estimates, payments and reports, and Hectile's events as a trigger.
 
+It is a verified node: see [Hectile on n8n](https://n8n.io/integrations/hectile/).
+
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/sustainable-use-license/) workflow automation platform.
 
 [Installation](#installation)
@@ -68,6 +70,7 @@ The trigger answers Hectile's test ping, which Hectile sends when an endpoint is
 
 ## Resources
 
+- [Hectile on n8n](https://n8n.io/integrations/hectile/)
 - [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
 - [Hectile: Zapier, Make, Pabbly Connect and n8n](https://hectile.com/help/automation-apps)
 - [Hectile: API keys](https://hectile.com/help/api-keys)
